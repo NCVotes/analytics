@@ -161,6 +161,6 @@ combined_final <- combined_final[,c("county_precinct","A","countA","B","countB",
 
 combined_final[is.na(combined_final)] <- 0
 
-write.csv(combined_final, 'precinct_2016_turnout_byrace.csv' )
+write.csv(combined_final, 'precinct_2016_turnout_byrace.csv')
  
 ```
