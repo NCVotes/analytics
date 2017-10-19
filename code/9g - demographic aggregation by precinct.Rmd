@@ -1,0 +1,166 @@
+```{r, eval = FALSE}
+
+library('tidyverse')
+library('reshape')
+library('reshape2')
+
+#history <- read.csv('history.csv', header = TRUE)
+dem_turnout <- read.csv('demographics_turnout.csv', header = TRUE)
+
+#Making registration date a Date value for easier filtering
+dem_turnout$registr_dt <- as.Date(dem_turnout$registr_dt, format = "%Y-%m-%d")
+
+#Pasting county and precinct for unique precincts
+dem_turnout$county_precinct <- as.factor(paste(dem_turnout$county_desc, dem_turnout$precinct_abbrv))
+
+dem_turnout$stability <- ifelse(dem_turnout$registr_dt >= "2000-01-01", 1, 0)
+
+#Filtering to those that registered before 2016 election date for 2016 turnout stats
+
+before16 <- filter(dem_turnout, registr_dt <= "2016-11-08")
+```
+
+```{r, eval = FALSE}
+#Population by Precinct
+
+pop_per_precinct <- dem_turnout %>% group_by(county_precinct) %>% summarise (population = n())
+
+#Race Proportions
+
+races <- dem_turnout %>% group_by(county_precinct, race_code) %>% summarise(n = n()) %>% mutate(freq = n/sum(n))
+
+race_props <- dcast(races, county_precinct ~ race_code, value.var = "freq")  %>% select(-U)
+race_props <- merge(pop_per_precinct, race_props, by = "county_precinct")
+
+race_props[is.na(race_props)] <- 0
+
+names(race_props) <- c("county_precinct","population","asian","black","indian","mixed","other_race","white")
+
+#Party Affiliations
+
+party_aff <- dem_turnout %>% group_by(county_precinct, party_cd) %>% summarise(n = n()) %>% mutate(freq = n/sum(n))
+
+party_aff_props <- dcast(party_aff, county_precinct ~ party_cd, value.var = "freq") %>% select(-UNA)
+party_aff_props[is.na(party_aff_props)] <- 0
+
+#Ethnic Groups
+
+ethnics <- dem_turnout %>% group_by(county_precinct, ethnic_code) %>% summarise(n = n()) %>% mutate(freq = n/sum(n)) 
+
+ethnic_props <- dcast(ethnics, county_precinct ~ ethnic_code, value.var = "freq") %>% select(-UN)
+
+names(ethnic_props) <- c("county_precinct","hispanic_latino","not_latino")
+
+#Driver's License or Not
+
+drivers <- dem_turnout %>% group_by(county_precinct, drivers_lic) %>% summarise(n = n()) %>% mutate(freq = n/sum(n))
+
+driver_props <- dcast(drivers, county_precinct ~ drivers_lic, value.var = "freq") %>% select(-N)
+
+names(driver_props) <- c("county_precinct","has_license")
+
+#Genders
+
+genders <- dem_turnout %>% group_by(county_precinct, gender_code) %>% summarise(n = n()) %>% mutate(freq = n/sum(n))
+
+gender_props <- dcast(genders, county_precinct ~ gender_code, value.var = "freq") %>% select(-U)
+
+names(gender_props) <- c("county_precinct","female","male")
+
+#Birth State - NC or Blank
+
+dem_turnout$birth_state[dem_turnout$birth_state != "NC" & dem_turnout$birth_state != "None"] <- NA
+dem_turnout$birth_state <- droplevels(dem_turnout$birth_state)
+
+birth_states <- dem_turnout %>% group_by(county_precinct, birth_state) %>% summarise(n = n()) %>% mutate(freq = n/sum(n))
+
+birth_state_props <- dcast(birth_states, county_precinct ~ birth_state, value.var = "freq")
+birth_state_props <- birth_state_props[,1:3]
+names(birth_state_props) <- c("county_precinct","NC_born","No_birth_state")
+
+#In a municipality - yes or no
+
+dem_turnout$municipality_abbrv[dem_turnout$municipality_abbrv != "None"] <- NA
+
+municipalities <- dem_turnout %>% group_by(county_precinct, municipality_abbrv) %>% summarise(n = n()) %>% mutate(freq = n/sum(n))
+
+municipalities_props <- dcast(municipalities, county_precinct ~ municipality_abbrv, value.var = "freq")
+
+municipalities_props <- municipalities_props[,1:2]
+names(municipalities_props) = c("county_precinct", "no_municipality")
+
+#Median age, filtering anomalies
+
+ages <- dem_turnout %>% group_by(county_precinct) %>% filter(birth_age < 117) %>% summarise(median_age = median(birth_age))
+
+#If registr_date was 2000 or later
+
+stabilities <- dem_turnout %>% group_by(county_precinct) %>% summarise(registr_post_2000 = mean(stability))
+
+#Merging all datasets by precinct
+
+cp1 <- merge(race_props, party_aff_props, by = "county_precinct")
+cp2 <- merge(cp1, ethnic_props, by = "county_precinct")
+cp3 <- merge(cp2, gender_props, by = "county_precinct")
+cp4 <- merge(cp3, driver_props, by = "county_precinct")
+cp5 <- merge(cp4, birth_state_props, by = "county_precinct")
+cp6 <- merge(cp5, stabilities, by = "county_precinct")
+
+precinct_demographics <- merge(cp6, ages, by = "county_precinct")
+
+precinct_demographics[is.na(precinct_demographics)] <- 0
+
+precinct_demographics$county_precinct <- gsub(" ", "", precinct_demographics$county_precinct)
+
+write_csv(precinct_demographics,"precinct_demographics.csv")
+```
+
+
+```{r, eval = FALSE}
+#Table producing turnouts and counts by race, by precinct
+
+dem_turnout$X2016[dem_turnout$X2016 > 1] <- 1
+
+#Getting tables so that each row has a precinct and unique race by precinct, and total count/turnout
+
+precincts16 <- before16 %>% group_by(county_precinct) %>% select(county_precinct, X2016, race_code, ethnic_code) %>% mutate(num_2016 = mean(X2016)) 
+
+race_16 <- precincts16 %>% group_by(county_precinct,race_code) %>% mutate(race_turnouts = mean(X2016), race_count = n() ) %>% ungroup()
+
+unique_race <- race_16[!duplicated(race_16[c(1,3,6)]),] %>% select(county_precinct, race_code, race_turnouts, race_count)
+
+#Getting tables so that each row has a precinct,  unique ethnicity by precinct, and total count/turnout
+
+ethnic_16 <- precincts16 %>% group_by(county_precinct, ethnic_code) %>% mutate(ethnic_turnouts = mean(X2016), ethnic_count = n())
+
+unique_ethnic <- ethnic_16[!duplicated(ethnic_16[c(1,4,6)]),] %>% select(county_precinct, ethnic_code, ethnic_turnouts, ethnic_count)
+
+#Turning race and ethnicity rows into columns, and appropriately naming columns
+
+racerows <- dcast(unique_race, county_precinct ~ race_code, value.var = "race_turnouts")
+racerows[,2:8] <- racerows[,2:8] * 100
+
+racecountrows <- dcast(unique_race, county_precinct ~ race_code, value.var = "race_count")
+
+names(racecountrows) <- c("county_precinct", "countA","countB","countI","countM","countO","countU","countW")
+
+ethnicrows <- dcast(unique_ethnic, county_precinct ~ ethnic_code, value.var = "ethnic_turnouts")
+ethnicrows[,2:4] <- ethnicrows[,2:4] * 100
+
+ethniccountrows <- dcast(unique_ethnic, county_precinct ~ ethnic_code, value.var = "ethnic_count")
+
+names(ethniccountrows) <- c("county_precinct", "countHL","countNL","countUN")
+
+#Merging race and ethnic tables together, to produce columns for count by race and turnout percentage by race, all by precinct
+
+combined <- merge(racerows, racecountrows, by = "county_precinct")
+combined2 <- merge(combined, ethnicrows, by = "county_precinct")
+combined_final <- merge(combined2, ethniccountrows, by = "county_precinct")
+
+combined_final <- combined_final[,c("county_precinct","A","countA","B","countB","I","countI","M","countM","O","countO","W","countW","HL","countHL","NL","countNL","UN","countUN")]
+
+combined_final[is.na(combined_final)] <- 0
+
+write.csv(combined_final, 'precinct_2016_turnout_byrace.csv' )
+ 
+```
